@@ -19,13 +19,23 @@
         li { padding: 8px 12px; margin-bottom: 6px; background: #0f172a; border-radius: 6px; display: flex; justify-content: space-between; font-size: 14px; }
         .status-active { color: #4ade80; font-weight: bold; }
         .status-paused { color: #f87171; font-weight: bold; }
+        
+        /* Alert banner styling */
+        #alert-banner { display: none; background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
 
     <div class="card">
         <h2>Wi-Fi Speed Monitor</h2>
-        <p>Status: <span id="auto-status" class="status-active">Running (Every 1 min)</span></p>
+        
+        <!-- Low speed warning banner -->
+        <div id="alert-banner">
+            ⚠️ Warning: Abnormally low Wi-Fi speed detected! <button class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="muteAlarm()">Mute Alarm</button>
+        </div>
+
+        <p>Status: <span id="auto-status" class="status-active">Running (Every 15 sec)</span></p>
         <p id="current-status">Ready for next scheduled check.</p>
         
         <div>
@@ -53,7 +63,13 @@
         let speedChart;
         let autoTimer = null;
         let isRunning = true;
-        const MAX_HISTORY = 30; // Keeps the chart clean and prevents memory bloat
+        const MAX_HISTORY = 30; 
+        
+        // Configuration: Set your low-speed threshold in Mbps here
+        const LOW_SPEED_THRESHOLD = 10.0; 
+
+        let alarmInterval = null;
+        let isAlarmActive = false;
 
         function initChart() {
             const ctx = document.getElementById('speedChart').getContext('2d');
@@ -101,7 +117,7 @@
                 await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
                 const ping = Math.round(performance.now() - pingStart);
 
-                // 2. Controlled Download Check (~135 KB file for safety and low bandwidth usage)
+                // 2. Controlled Download Check (~135 KB file)
                 const fileUrl = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'; 
                 const fileSizeBits = 135 * 1024 * 8; 
                 
@@ -111,9 +127,10 @@
                 const dlDuration = (performance.now() - dlStart) / 1000;
 
                 const downloadSpeed = ((fileSizeBits / dlDuration) / (1024 * 1024)).toFixed(2);
+                const speedNum = parseFloat(downloadSpeed);
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-                const newRecord = { time: now, download: parseFloat(downloadSpeed), ping: ping };
+                const newRecord = { time: now, download: speedNum, ping: ping };
 
                 // Update Storage
                 let history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
@@ -123,17 +140,69 @@
 
                 statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
                 
+                // Check if speed is abnormally low
+                if (speedNum < LOW_SPEED_THRESHOLD) {
+                    triggerAlarm();
+                } else {
+                    stopAlarm();
+                }
+
                 refreshUI();
 
             } catch (error) {
                 statusEl.textContent = 'Test failed (Network offline or blocked).';
+                triggerAlarm(); // Treat total disconnect as low speed/error
             }
+        }
+
+        // Web Audio API Beep Generator
+        function playBeepTone() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(700, audioCtx.currentTime); // Pitch
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.25); // 250ms beep duration
+            } catch (e) {
+                console.log("AudioContext blocked or not supported.");
+            }
+        }
+
+        function triggerAlarm() {
+            document.getElementById('alert-banner').style.display = 'block';
+            if (!isAlarmActive) {
+                isAlarmActive = true;
+                playBeepTone();
+                // Repeat beep every 1.5 seconds until speed returns to normal
+                alarmInterval = setInterval(() => {
+                    playBeepTone();
+                }, 1500);
+            }
+        }
+
+        function stopAlarm() {
+            if (isAlarmActive) {
+                isAlarmActive = false;
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+                document.getElementById('alert-banner').style.display = 'none';
+            }
+        }
+
+        function muteAlarm() {
+            stopAlarm();
+            // Temporarily hide banner until next test cycle
+            document.getElementById('alert-banner').style.display = 'none';
         }
 
         function refreshUI() {
             const history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
             
-            // Update Timeline List
             const listEl = document.getElementById('timeline-list');
             listEl.innerHTML = '';
             if (history.length === 0) {
@@ -147,7 +216,6 @@
                 listEl.appendChild(li);
             });
 
-            // Update Chart Data Live
             const reversed = [...history].reverse();
             speedChart.data.labels = reversed.map(i => i.time);
             speedChart.data.datasets[0].data = reversed.map(i => i.download);
@@ -165,7 +233,7 @@
                 statusLabel.className = 'status-paused';
                 toggleBtn.textContent = 'Resume Auto-Check';
             } else {
-                autoTimer = setInterval(runSpeedTest, 15000); // 1 minute interval
+                autoTimer = setInterval(runSpeedTest, 15000); // 15 second interval
                 isRunning = true;
                 statusLabel.textContent = 'Running (Every 15 sec)';
                 statusLabel.className = 'status-active';
@@ -175,6 +243,7 @@
 
         function clearHistory() {
             localStorage.removeItem('speedTestHistory');
+            stopAlarm();
             refreshUI();
             document.getElementById('current-status').textContent = 'History cleared.';
         }
@@ -183,7 +252,7 @@
         window.onload = () => {
             initChart();
             refreshUI();
-            // Start the 1-minute automated background timer
+            // Start the 15-second automated background timer
             autoTimer = setInterval(runSpeedTest, 15000);
         };
     </script>
