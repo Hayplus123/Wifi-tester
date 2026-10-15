@@ -30,9 +30,10 @@
     <div class="card">
         <h2>Wi-Fi Speed Monitor</h2>
         
-        <!-- Low speed warning banner -->
+        <!-- Warning / Outage Alert Banner -->
         <div id="alert-banner">
-            ⚠️ Warning: Wi-Fi speed dropped below 5 Mbps! <button class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="muteAlarm()">Mute Alarm</button>
+            <span id="alert-text">⚠️ Warning: Wi-Fi speed dropped below 5 Mbps!</span> 
+            <button id="mute-btn" class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="attemptMute()">Mute Alarm (PW Required)</button>
         </div>
 
         <p>Status: <span id="auto-status" class="status-active">Running (Every 15 sec)</span></p>
@@ -40,7 +41,7 @@
         
         <div>
             <button onclick="runSpeedTest()">Test Now</button>
-            <button id="toggle-btn" class="secondary" onclick="toggleAutoTimer()">Pause Auto-Check</button>
+            <button id="toggle-btn" class="secondary" onclick="toggleAutoTimer()">Pause Auto-Check (PW Required)</button>
             <button class="danger" onclick="clearHistory()">Clear Data</button>
         </div>
     </div>
@@ -65,11 +66,22 @@
         let isRunning = true;
         const MAX_HISTORY = 30; 
         
-        // Configuration: Alarm triggers only if speed falls below 5.0 Mbps
         const LOW_SPEED_THRESHOLD = 5.0; 
+        const CORRECT_PASSWORD = "Hayden0401";
 
         let alarmInterval = null;
         let isAlarmActive = false;
+        let isTotalOutage = false; // Tracks if Wi-Fi is completely dead
+
+        function verifyPassword() {
+            const input = prompt("Enter password (Hayden0401) to proceed:");
+            if (input === CORRECT_PASSWORD) {
+                return true;
+            } else if (input !== null) {
+                alert("Incorrect password!");
+            }
+            return false;
+        }
 
         function initChart() {
             const ctx = document.getElementById('speedChart').getContext('2d');
@@ -132,7 +144,6 @@
 
                 const newRecord = { time: now, download: speedNum, ping: ping };
 
-                // Update Storage
                 let history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
                 history.unshift(newRecord);
                 if (history.length > MAX_HISTORY) history.pop();
@@ -140,9 +151,11 @@
 
                 statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
                 
-                // Only trigger alarm if speed is strictly below 5 Mbps
-                if (speedNum < LOW_SPEED_THRESHOLD) {
-                    triggerAlarm();
+                // State Logic: Outage vs Low Speed vs Normal
+                if (speedNum <= 0.1) {
+                    triggerTotalOutageAlarm();
+                } else if (speedNum < LOW_SPEED_THRESHOLD) {
+                    triggerLowSpeedAlarm();
                 } else {
                     stopAlarm();
                 }
@@ -150,8 +163,8 @@
                 refreshUI();
 
             } catch (error) {
-                statusEl.textContent = 'Test failed (Network offline or blocked).';
-                triggerAlarm(); 
+                statusEl.textContent = 'Test failed (Network offline).';
+                triggerTotalOutageAlarm(); // Total connection loss
             }
         }
 
@@ -173,18 +186,34 @@
             }
         }
 
-        function triggerAlarm() {
+        function triggerLowSpeedAlarm() {
+            isTotalOutage = false;
+            document.getElementById('alert-text').textContent = '⚠️ Warning: Wi-Fi speed dropped below 5 Mbps!';
+            document.getElementById('mute-btn').style.display = 'inline-block'; // Show mute button (requires password)
             document.getElementById('alert-banner').style.display = 'block';
+
             if (!isAlarmActive) {
                 isAlarmActive = true;
                 playBeepTone();
-                alarmInterval = setInterval(() => {
-                    playBeepTone();
-                }, 500);
+                alarmInterval = setInterval(playBeepTone, 1500);
+            }
+        }
+
+        function triggerTotalOutageAlarm() {
+            isTotalOutage = true;
+            document.getElementById('alert-text').textContent = '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)';
+            document.getElementById('mute-btn').style.display = 'none'; // HIDE mute button completely during total outage
+            document.getElementById('alert-banner').style.display = 'block';
+
+            if (!isAlarmActive) {
+                isAlarmActive = true;
+                playBeepTone();
+                alarmInterval = setInterval(playBeepTone, 1000); // Faster emergency beep
             }
         }
 
         function stopAlarm() {
+            isTotalOutage = false;
             if (isAlarmActive) {
                 isAlarmActive = false;
                 clearInterval(alarmInterval);
@@ -193,9 +222,15 @@
             }
         }
 
-        function muteAlarm() {
-            stopAlarm();
-            document.getElementById('alert-banner').style.display = 'none';
+        function attemptMute() {
+            if (isTotalOutage) {
+                alert("Action blocked: The alarm cannot be muted while the Wi-Fi is completely down!");
+                return;
+            }
+            // For low speed alerts, require password
+            if (verifyPassword()) {
+                stopAlarm();
+            }
         }
 
         function refreshUI() {
@@ -221,6 +256,9 @@
         }
 
         function toggleAutoTimer() {
+            // Disabling/Pausing auto check requires password
+            if (!verifyPassword()) return;
+
             const statusLabel = document.getElementById('auto-status');
             const toggleBtn = document.getElementById('toggle-btn');
 
@@ -229,13 +267,13 @@
                 isRunning = false;
                 statusLabel.textContent = 'Paused';
                 statusLabel.className = 'status-paused';
-                toggleBtn.textContent = 'Resume Auto-Check';
+                toggleBtn.textContent = 'Resume Auto-Check (PW Required)';
             } else {
                 autoTimer = setInterval(runSpeedTest, 15000); 
                 isRunning = true;
                 statusLabel.textContent = 'Running (Every 15 sec)';
                 statusLabel.className = 'status-active';
-                toggleBtn.textContent = 'Pause Auto-Check';
+                toggleBtn.textContent = 'Pause Auto-Check (PW Required)';
             }
         }
 
