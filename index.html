@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Automated Wi-Fi Speed & Timeline Monitor</title>
+    <!-- Chart.js CDN for the line chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        button { background: #38bdf8; color: #0f172a; border: none; padding: 10px 18px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-right: 8px; margin-bottom: 8px;}
+        button:hover { background: #0ea5e9; }
+        .secondary { background: #334155; color: #cbd5e1; }
+        .secondary:hover { background: #475569; }
+        .danger { background: #ef4444; color: #fff; }
+        .danger:hover { background: #dc2626; }
+        .chart-container { position: relative; height: 250px; width: 100%; margin-top: 15px; }
+        ul { list-style: none; padding: 0; max-height: 200px; overflow-y: auto; }
+        li { padding: 8px 12px; margin-bottom: 6px; background: #0f172a; border-radius: 6px; display: flex; justify-content: space-between; font-size: 14px; }
+        .status-active { color: #4ade80; font-weight: bold; }
+        .status-paused { color: #f87171; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Wi-Fi Speed Monitor</h2>
+        <p>Status: <span id="auto-status" class="status-active">Running (Every 1 min)</span></p>
+        <p id="current-status">Ready for next scheduled check.</p>
+        
+        <div>
+            <button onclick="runSpeedTest()">Test Now</button>
+            <button id="toggle-btn" class="secondary" onclick="toggleAutoTimer()">Pause Auto-Check</button>
+            <button class="danger" onclick="clearHistory()">Clear Data</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Speed Performance Chart</h3>
+        <div class="chart-container">
+            <canvas id="speedChart"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Recent Logs</h3>
+        <ul id="timeline-list">
+            <!-- Logs populate here -->
+        </ul>
+    </div>
+
+    <script>
+        let speedChart;
+        let autoTimer = null;
+        let isRunning = true;
+        const MAX_HISTORY = 30; // Keeps the chart clean and prevents memory bloat
+
+        function initChart() {
+            const ctx = document.getElementById('speedChart').getContext('2d');
+            const history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]').reverse();
+            
+            const labels = history.map(item => item.time);
+            const data = history.map(item => item.download);
+
+            speedChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Download Speed (Mbps)',
+                        data: data,
+                        borderColor: '#38bdf8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', maxTicksLimit: 8 } },
+                        y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#f8fafc' } }
+                    }
+                }
+            });
+        }
+
+        async function runSpeedTest() {
+            const statusEl = document.getElementById('current-status');
+            statusEl.textContent = 'Running test...';
+
+            try {
+                // 1. Ping Check
+                const pingStart = performance.now();
+                await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
+                const ping = Math.round(performance.now() - pingStart);
+
+                // 2. Controlled Download Check (~135 KB file for safety and low bandwidth usage)
+                const fileUrl = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'; 
+                const fileSizeBits = 135 * 1024 * 8; 
+                
+                const dlStart = performance.now();
+                const response = await fetch(fileUrl + '?cacheBust=' + Math.random());
+                await response.blob();
+                const dlDuration = (performance.now() - dlStart) / 1000;
+
+                const downloadSpeed = ((fileSizeBits / dlDuration) / (1024 * 1024)).toFixed(2);
+                const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                const newRecord = { time: now, download: parseFloat(downloadSpeed), ping: ping };
+
+                // Update Storage
+                let history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
+                history.unshift(newRecord);
+                if (history.length > MAX_HISTORY) history.pop();
+                localStorage.setItem('speedTestHistory', JSON.stringify(history));
+
+                statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
+                
+                refreshUI();
+
+            } catch (error) {
+                statusEl.textContent = 'Test failed (Network offline or blocked).';
+            }
+        }
+
+        function refreshUI() {
+            const history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
+            
+            // Update Timeline List
+            const listEl = document.getElementById('timeline-list');
+            listEl.innerHTML = '';
+            if (history.length === 0) {
+                listEl.innerHTML = '<li style="color: #64748b; justify-content: center;">No tests recorded yet.</li>';
+                return;
+            }
+
+            history.forEach(entry => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>📅 ${entry.time}</span> <span>⚡ <b>${entry.download} Mbps</b> (${entry.ping} ms ping)</span>`;
+                listEl.appendChild(li);
+            });
+
+            // Update Chart Data Live
+            const reversed = [...history].reverse();
+            speedChart.data.labels = reversed.map(i => i.time);
+            speedChart.data.datasets[0].data = reversed.map(i => i.download);
+            speedChart.update();
+        }
+
+        function toggleAutoTimer() {
+            const statusLabel = document.getElementById('auto-status');
+            const toggleBtn = document.getElementById('toggle-btn');
+
+            if (isRunning) {
+                clearInterval(autoTimer);
+                isRunning = false;
+                statusLabel.textContent = 'Paused';
+                statusLabel.className = 'status-paused';
+                toggleBtn.textContent = 'Resume Auto-Check';
+            } else {
+                autoTimer = setInterval(runSpeedTest, 60000); // 1 minute interval
+                isRunning = true;
+                statusLabel.textContent = 'Running (Every 1 min)';
+                statusLabel.className = 'status-active';
+                toggleBtn.textContent = 'Pause Auto-Check';
+            }
+        }
+
+        function clearHistory() {
+            localStorage.removeItem('speedTestHistory');
+            refreshUI();
+            document.getElementById('current-status').textContent = 'History cleared.';
+        }
+
+        // Initialize on load
+        window.onload = () => {
+            initChart();
+            refreshUI();
+            // Start the 1-minute automated background timer
+            autoTimer = setInterval(runSpeedTest, 60000);
+        };
+    </script>
+</body>
+</html>
