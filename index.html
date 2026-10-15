@@ -165,9 +165,9 @@
                 statusLabel.className = 'status-paused';
                 toggleBtn.textContent = 'Resume Auto-Check';
             } else {
-                autoTimer = setInterval(runSpeedTest, 60000); // 1 minute interval
+                autoTimer = setInterval(runSpeedTest, 15000); // 1 minute interval
                 isRunning = true;
-                statusLabel.textContent = 'Running (Every 1 min)';
+                statusLabel.textContent = 'Running (Every 15 sec)';
                 statusLabel.className = 'status-active';
                 toggleBtn.textContent = 'Pause Auto-Check';
             }
