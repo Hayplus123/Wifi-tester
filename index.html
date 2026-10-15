@@ -32,7 +32,7 @@
         
         <!-- Low speed warning banner -->
         <div id="alert-banner">
-            ⚠️ Warning: Abnormally low Wi-Fi speed detected! <button class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="muteAlarm()">Mute Alarm</button>
+            ⚠️ Warning: Wi-Fi speed dropped below 5 Mbps! <button class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="muteAlarm()">Mute Alarm</button>
         </div>
 
         <p>Status: <span id="auto-status" class="status-active">Running (Every 15 sec)</span></p>
@@ -65,8 +65,8 @@
         let isRunning = true;
         const MAX_HISTORY = 30; 
         
-        // Configuration: Set your low-speed threshold in Mbps here
-        const LOW_SPEED_THRESHOLD = 10.0; 
+        // Configuration: Alarm triggers only if speed falls below 5.0 Mbps
+        const LOW_SPEED_THRESHOLD = 5.0; 
 
         let alarmInterval = null;
         let isAlarmActive = false;
@@ -140,7 +140,7 @@
 
                 statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
                 
-                // Check if speed is abnormally low
+                // Only trigger alarm if speed is strictly below 5 Mbps
                 if (speedNum < LOW_SPEED_THRESHOLD) {
                     triggerAlarm();
                 } else {
@@ -151,7 +151,7 @@
 
             } catch (error) {
                 statusEl.textContent = 'Test failed (Network offline or blocked).';
-                triggerAlarm(); // Treat total disconnect as low speed/error
+                triggerAlarm(); 
             }
         }
 
@@ -162,12 +162,12 @@
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(700, audioCtx.currentTime); // Pitch
+                osc.frequency.setValueAtTime(700, audioCtx.currentTime); 
                 gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 osc.start();
-                osc.stop(audioCtx.currentTime + 0.25); // 250ms beep duration
+                osc.stop(audioCtx.currentTime + 0.25); 
             } catch (e) {
                 console.log("AudioContext blocked or not supported.");
             }
@@ -178,7 +178,6 @@
             if (!isAlarmActive) {
                 isAlarmActive = true;
                 playBeepTone();
-                // Repeat beep every 1.5 seconds until speed returns to normal
                 alarmInterval = setInterval(() => {
                     playBeepTone();
                 }, 1500);
@@ -196,7 +195,6 @@
 
         function muteAlarm() {
             stopAlarm();
-            // Temporarily hide banner until next test cycle
             document.getElementById('alert-banner').style.display = 'none';
         }
 
@@ -233,7 +231,7 @@
                 statusLabel.className = 'status-paused';
                 toggleBtn.textContent = 'Resume Auto-Check';
             } else {
-                autoTimer = setInterval(runSpeedTest, 15000); // 15 second interval
+                autoTimer = setInterval(runSpeedTest, 15000); 
                 isRunning = true;
                 statusLabel.textContent = 'Running (Every 15 sec)';
                 statusLabel.className = 'status-active';
@@ -248,11 +246,9 @@
             document.getElementById('current-status').textContent = 'History cleared.';
         }
 
-        // Initialize on load
         window.onload = () => {
             initChart();
             refreshUI();
-            // Start the 15-second automated background timer
             autoTimer = setInterval(runSpeedTest, 15000);
         };
     </script>
