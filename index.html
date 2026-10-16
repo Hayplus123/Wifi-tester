@@ -217,7 +217,7 @@
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 osc.start();
-                osc.stop(audioCtx.currentTime + 0.15); // Shorter duration for rapid beeps
+                osc.stop(audioCtx.currentTime + 0.15); 
             } catch (e) {
                 console.log("AudioContext blocked or not supported.");
             }
@@ -234,3 +234,100 @@
                 playBeepTone();
                 // Beep every 0.5 seconds (500 ms)
                 alarmInterval = setInterval(playBeepTone, 500);
+            }
+        }
+
+        function triggerTotalOutageAlarm() {
+            isTotalOutage = true;
+            document.getElementById('alert-text').textContent = '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)';
+            document.getElementById('mute-btn').style.display = 'none'; 
+            document.getElementById('alert-banner').style.display = 'block';
+
+            if (!isAlarmActive) {
+                isAlarmActive = true;
+                playBeepTone();
+                // Beep every 0.5 seconds (500 ms)
+                alarmInterval = setInterval(playBeepTone, 500); 
+            }
+        }
+
+        function stopAlarm() {
+            isTotalOutage = false;
+            if (isAlarmActive) {
+                isAlarmActive = false;
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+                document.getElementById('alert-banner').style.display = 'none';
+            }
+        }
+
+        function attemptMute() {
+            if (isTotalOutage) {
+                alert("Action blocked: The alarm cannot be muted while the Wi-Fi is completely down!");
+                return;
+            }
+            verifyPassword(() => {
+                stopAlarm();
+            });
+        }
+
+        function refreshUI() {
+            const history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
+            
+            const listEl = document.getElementById('timeline-list');
+            listEl.innerHTML = '';
+            if (history.length === 0) {
+                listEl.innerHTML = '<li style="color: #64748b; justify-content: center;">No tests recorded yet.</li>';
+                return;
+            }
+
+            history.forEach(entry => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>📅 ${entry.time}</span> <span>⚡ <b>${entry.download} Mbps</b> (${entry.ping} ms ping)</span>`;
+                listEl.appendChild(li);
+            });
+
+            const reversed = [...history].reverse();
+            speedChart.data.labels = reversed.map(i => i.time);
+            speedChart.data.datasets[0].data = reversed.map(i => i.download);
+            speedChart.update();
+        }
+
+        function toggleAutoTimer() {
+            verifyPassword(() => {
+                const statusLabel = document.getElementById('auto-status');
+                const toggleBtn = document.getElementById('toggle-btn');
+
+                if (isRunning) {
+                    clearInterval(autoTimer);
+                    isRunning = false;
+                    statusLabel.textContent = 'Paused';
+                    statusLabel.className = 'status-paused';
+                    toggleBtn.textContent = 'Resume Auto-Check (PW Required)';
+                } else {
+                    autoTimer = setInterval(runSpeedTest, 15000); 
+                    isRunning = true;
+                    statusLabel.textContent = 'Running (Every 15 sec)';
+                    statusLabel.className = 'status-active';
+                    toggleBtn.textContent = 'Pause Auto-Check (PW Required)';
+                }
+            });
+        }
+
+        function clearHistory() {
+            verifyPassword(() => {
+                localStorage.removeItem('speedTestHistory');
+                stopAlarm();
+                refreshUI();
+                document.getElementById('current-status').textContent = 'History cleared.';
+            });
+        }
+
+        window.onload = () => {
+            initChart();
+            refreshUI();
+            autoTimer = setInterval(runSpeedTest, 15000);
+        };
+    </script>
+</body>
+</html>
