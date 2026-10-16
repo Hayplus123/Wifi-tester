@@ -100,10 +100,11 @@
         function submitPassword() {
             const input = document.getElementById('password-input').value;
             if (input === CORRECT_PASSWORD) {
+                // Capture callback before closing modal clears it
+                const callback = pendingPasswordCallback;
                 closePasswordModal();
-                if (pendingPasswordCallback) {
-                    pendingPasswordCallback();
-                    pendingPasswordCallback = null;
+                if (callback) {
+                    callback();
                 }
             } else {
                 alert("Incorrect password!");
