@@ -100,7 +100,6 @@
         function submitPassword() {
             const input = document.getElementById('password-input').value;
             if (input === CORRECT_PASSWORD) {
-                // Capture callback before closing modal clears it
                 const callback = pendingPasswordCallback;
                 closePasswordModal();
                 if (callback) {
@@ -158,9 +157,13 @@
             });
         }
 
-        async function runSpeedTest() {
+        async function runSpeedTest(isRetry = false) {
             const statusEl = document.getElementById('current-status');
-            statusEl.textContent = 'Running test...';
+            if (!isRetry) {
+                statusEl.textContent = 'Running test (5 MB stream)...';
+            } else {
+                statusEl.textContent = 'Verifying with retest...';
+            }
 
             try {
                 // 1. Ping Check
@@ -168,18 +171,25 @@
                 await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
                 const ping = Math.round(performance.now() - pingStart);
 
-                // 2. Controlled Download Check (~135 KB file)
-                const fileUrl = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'; 
-                const fileSizeBits = 135 * 1024 * 8; 
+                // 2. Controlled Download Check using a larger 5 MB file to bypass local caching
+                const fileUrl = 'https://speed.cloudflare.com/__down?bytes=5000000'; 
+                const fileSizeBits = 5000000 * 8; 
                 
                 const dlStart = performance.now();
-                const response = await fetch(fileUrl + '?cacheBust=' + Math.random());
+                const response = await fetch(fileUrl + '&cacheBust=' + Math.random());
                 await response.blob();
                 const dlDuration = (performance.now() - dlStart) / 1000;
 
                 const downloadSpeed = ((fileSizeBits / dlDuration) / (1024 * 1024)).toFixed(2);
                 const speedNum = parseFloat(downloadSpeed);
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                // If low/failing on the first try, wait 0.1 sec and retry ONCE
+                if ((speedNum < LOW_SPEED_THRESHOLD || speedNum <= 0.1) && !isRetry) {
+                    statusEl.textContent = `Low speed (${downloadSpeed} Mbps). Retrying in 0.1s...`;
+                    await new Promise(resolve => setTimeout(resolve, 100)); // 0.1 sec delay
+                    return await runSpeedTest(true); // Execute retest once
+                }
 
                 const newRecord = { time: now, download: speedNum, ping: ping };
 
@@ -190,6 +200,7 @@
 
                 statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
                 
+                // Final evaluation (either original or after successful retest)
                 if (speedNum <= 0.1) {
                     triggerTotalOutageAlarm();
                 } else if (speedNum < LOW_SPEED_THRESHOLD) {
@@ -201,8 +212,16 @@
                 refreshUI();
 
             } catch (error) {
-                statusEl.textContent = 'Test failed (Network offline).';
-                triggerTotalOutageAlarm(); 
+                // If it threw a network error on the first attempt, retry once after 0.1 sec
+                if (!isRetry) {
+                    statusEl.textContent = 'Test hiccup. Retrying in 0.1s...';
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    return await runSpeedTest(true);
+                } else {
+                    // Retry also failed -> trigger total outage alarm
+                    statusEl.textContent = 'Test failed (Network offline).';
+                    triggerTotalOutageAlarm(); 
+                }
             }
         }
 
