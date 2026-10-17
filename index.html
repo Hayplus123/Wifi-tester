@@ -213,20 +213,19 @@
 
                 let median = recentSpeeds.length >= 5 ? calculateMedian(recentSpeeds) : null;
                 
-                statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
+                statusEl.innerHTML = `Latest: <b>{evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>{median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
                 // Priority Alarm Evaluation Logic
                 if (evaluationSpeed <= 0.1) {
-                    // Priority 2: Total Outage (0.5s beep, un-mutable)
+                    // Priority 3: Total Outage (0.5s beep)
                     triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
-                } else if (median !== null && median < 50.0) {
-                    // Priority 1: Median < 50 Mbps Alarm (3s beep, overrides other warnings)
-                    triggerAlarm('medianLow', 3000, `🚨 WARNING: Median speed (${median.toFixed(1)} Mbps) is below 50 Mbps!`);
+                } else if (evaluationSpeed < 50.0 || (median !== null && median < 50.0)) {
+                    // Priority 1: Below 50 Mbps Alarm (1s fast beep - overrides median)
+                    triggerAlarm('below50', 1000, `🚨 WARNING: Speed or Median is below 50 Mbps (${evaluationSpeed} Mbps)!`);
                 } else if (median !== null && evaluationSpeed < median) {
-                    // Priority 3: Speed below Median (5s beep)
+                    // Priority 2: Speed below Median (5s beep)
                     triggerAlarm('belowMedian', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps)!`);
                 } else {
-                    // Calibration phase fallback (< 5 cycles)
                     if (recentSpeeds.length < 5 && evaluationSpeed < INITIAL_BASELINE) {
                         triggerAlarm('calibratingLow', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below 50 Mbps baseline (Calibrating ${recentSpeeds.length}/5 cycles)!`);
                     } else {
@@ -272,7 +271,6 @@
             banner.className = ''; 
             document.getElementById('alert-text').textContent = message;
             
-            // Only hide mute button for total outage
             document.getElementById('mute-btn').style.display = isTotalOutage ? 'none' : 'inline-block';
             banner.style.display = 'block';
 
@@ -325,7 +323,7 @@
 
             history.forEach(entry => {
                 const li = document.createElement('li');
-                li.innerHTML = `<span>📅 ${entry.time}</span> <span>⚡ <b>${entry.download} Mbps</b> (${entry.ping} ms ping)</span>`;
+                li.innerHTML = `<span>📅 {entry.time}</span> <span>⚡ <b>{entry.download} Mbps</b> ({entry.ping} ms ping)</span>`;
                 listEl.appendChild(li);
             });
 
@@ -360,7 +358,7 @@
             verifyPassword(() => {
                 localStorage.removeItem('speedTestHistory');
                 recentSpeeds = []; 
-                stopAlarm(); // Instantly clears notices and stops alarms
+                stopAlarm(); 
                 refreshUI();
                 document.getElementById('current-status').textContent = 'History and median calibration cleared.';
             });
