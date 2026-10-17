@@ -22,7 +22,6 @@
         
         /* Alert banner styling */
         #alert-banner { display: none; background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; animation: pulse 1.5s infinite; }
-        #alert-banner.silent { background: #1e3a8a; border: 1px solid #3b82f6; color: #93c5fd; animation: none; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
 
         /* Custom Password Modal overlay (non-blocking) */
@@ -83,13 +82,14 @@
         let isRunning = true;
         const MAX_HISTORY = 30; 
         
-        const INITIAL_BASELINE = 50.0; // Default alert point before median is calibrated
+        const INITIAL_BASELINE = 50.0; 
         const CORRECT_PASSWORD = "Hayden0401";
 
-        let recentSpeeds = []; // Stores last 5 speed cycles for median calculation
+        let recentSpeeds = []; 
         let alarmInterval = null;
         let isAlarmActive = false;
         let isTotalOutage = false; 
+        let currentAlarmMode = null;
         let pendingPasswordCallback = null; 
 
         function calculateMedian(arr) {
@@ -193,7 +193,6 @@
                 const speedNum = parseFloat(downloadSpeed);
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-                // 0.1s single retry buffer on low/failing speeds
                 let evaluationSpeed = speedNum;
                 if ((speedNum < INITIAL_BASELINE || speedNum <= 0.1) && !isRetry) {
                     statusEl.textContent = `Low speed (${downloadSpeed} Mbps). Retrying in 0.1s...`;
@@ -212,29 +211,24 @@
                 if (history.length > MAX_HISTORY) history.pop();
                 localStorage.setItem('speedTestHistory', JSON.stringify(history));
 
-                // Determine Median and Thresholds
                 let median = recentSpeeds.length >= 5 ? calculateMedian(recentSpeeds) : null;
                 
                 statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
-                // Alert Evaluation Logic
+                // Priority Alarm Evaluation Logic
                 if (evaluationSpeed <= 0.1) {
-                    triggerTotalOutageAlarm();
-                } else if (median !== null) {
-                    const soundAlarmThreshold = median - 5.0;
-                    if (evaluationSpeed < soundAlarmThreshold) {
-                        // Below median - 5 Mbps: Loud sound alarm + visual alert
-                        triggerLowSpeedAlarm(`⚠️ Warning: Speed (${evaluationSpeed} Mbps) is 5+ Mbps below median (${median.toFixed(1)} Mbps)!`);
-                    } else if (evaluationSpeed < median) {
-                        // Below median only: Silent visual alert, NO sound
-                        triggerSilentAlert(`ℹ️ Notice: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps).`);
-                    } else {
-                        stopAlarm();
-                    }
+                    // Priority 2: Total Outage (0.5s beep, un-mutable)
+                    triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                } else if (median !== null && median < 50.0) {
+                    // Priority 1: Median < 50 Mbps Alarm (3s beep, overrides other warnings)
+                    triggerAlarm('medianLow', 3000, `🚨 WARNING: Median speed (${median.toFixed(1)} Mbps) is below 50 Mbps!`);
+                } else if (median !== null && evaluationSpeed < median) {
+                    // Priority 3: Speed below Median (5s beep)
+                    triggerAlarm('belowMedian', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps)!`);
                 } else {
-                    // First 5 cycles: Use initial 50 Mbps baseline
-                    if (evaluationSpeed < INITIAL_BASELINE) {
-                        triggerLowSpeedAlarm(`⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below 50 Mbps baseline (Calibrating ${recentSpeeds.length}/5 cycles)!`);
+                    // Calibration phase fallback (< 5 cycles)
+                    if (recentSpeeds.length < 5 && evaluationSpeed < INITIAL_BASELINE) {
+                        triggerAlarm('calibratingLow', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below 50 Mbps baseline (Calibrating ${recentSpeeds.length}/5 cycles)!`);
                     } else {
                         stopAlarm();
                     }
@@ -249,7 +243,7 @@
                     return await runSpeedTest(true);
                 } else {
                     statusEl.textContent = 'Test failed (Network offline).';
-                    triggerTotalOutageAlarm(); 
+                    triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
                 }
             }
         }
@@ -272,54 +266,38 @@
             }
         }
 
-        function triggerLowSpeedAlarm(message) {
-            isTotalOutage = false;
+        function triggerAlarm(mode, intervalMs, message) {
+            isTotalOutage = (mode === 'outage');
             const banner = document.getElementById('alert-banner');
-            banner.className = ''; // Remove silent class
+            banner.className = ''; 
             document.getElementById('alert-text').textContent = message;
-            document.getElementById('mute-btn').style.display = 'inline-block'; 
+            
+            // Only hide mute button for total outage
+            document.getElementById('mute-btn').style.display = isTotalOutage ? 'none' : 'inline-block';
             banner.style.display = 'block';
 
-            if (!isAlarmActive) {
+            if (!isAlarmActive || currentAlarmMode !== mode) {
+                stopAlarmInterval();
                 isAlarmActive = true;
+                currentAlarmMode = mode;
                 playBeepTone();
-                // Beep every 0.5 seconds (500 ms)
-                alarmInterval = setInterval(playBeepTone, 500);
+                alarmInterval = setInterval(playBeepTone, intervalMs);
             }
         }
 
-        function triggerSilentAlert(message) {
-            isTotalOutage = false;
-            stopAlarm(); // Ensure any sounding alarm is stopped
-            const banner = document.getElementById('alert-banner');
-            banner.className = 'silent'; // Apply blue silent theme
-            document.getElementById('alert-text').textContent = message;
-            document.getElementById('mute-btn').style.display = 'none'; // No mute button needed since no sound
-            banner.style.display = 'block';
-        }
-
-        function triggerTotalOutageAlarm() {
-            isTotalOutage = true;
-            const banner = document.getElementById('alert-banner');
-            banner.className = '';
-            document.getElementById('alert-text').textContent = '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)';
-            document.getElementById('mute-btn').style.display = 'none'; 
-            banner.style.display = 'block';
-
-            if (!isAlarmActive) {
-                isAlarmActive = true;
-                playBeepTone();
-                // Beep every 0.5 seconds (500 ms)
-                alarmInterval = setInterval(playBeepTone, 500); 
+        function stopAlarmInterval() {
+            if (alarmInterval) {
+                clearInterval(alarmInterval);
+                alarmInterval = null;
             }
         }
 
         function stopAlarm() {
             isTotalOutage = false;
+            currentAlarmMode = null;
             if (isAlarmActive) {
                 isAlarmActive = false;
-                clearInterval(alarmInterval);
-                alarmInterval = null;
+                stopAlarmInterval();
                 document.getElementById('alert-banner').style.display = 'none';
                 document.getElementById('alert-banner').className = '';
             }
@@ -381,8 +359,8 @@
         function clearHistory() {
             verifyPassword(() => {
                 localStorage.removeItem('speedTestHistory');
-                recentSpeeds = []; // Reset the 5-cycle median calibration history on reset!
-                stopAlarm();
+                recentSpeeds = []; 
+                stopAlarm(); // Instantly clears notices and stops alarms
                 refreshUI();
                 document.getElementById('current-status').textContent = 'History and median calibration cleared.';
             });
