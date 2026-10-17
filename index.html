@@ -215,15 +215,18 @@
                 
                 statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
-                // Priority Alarm Evaluation Logic
+                // Alarm Evaluation Logic
                 if (evaluationSpeed <= 0.1) {
-                    // Priority 3: Total Outage (0.5s beep)
+                    // Total Outage (0.5s beep)
                     triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
-                } else if (evaluationSpeed < 50.0 || (median !== null && median < 50.0)) {
-                    // Priority 1: Below 50 Mbps Alarm (1s fast beep - overrides median)
-                    triggerAlarm('below50', 1000, `🚨 WARNING: Speed or Median is below 50 Mbps (${evaluationSpeed} Mbps)!`);
+                } else if (evaluationSpeed < 50.0) {
+                    // Current speed below 50 Mbps (1s fast beep)
+                    triggerAlarm('below50', 1000, `🚨 WARNING: Current speed is below 50 Mbps (${evaluationSpeed} Mbps)!`);
+                } else if (median !== null && median < 50.0) {
+                    // Current speed >= 50 Mbps, but median < 50 Mbps (3s beep)
+                    triggerAlarm('medianBelow50', 3000, `⚠️ Warning: Median speed (${median.toFixed(1)} Mbps) is below 50 Mbps!`);
                 } else if (median !== null && evaluationSpeed < median) {
-                    // Priority 2: Speed below Median (5s beep)
+                    // Speed below median (5s beep)
                     triggerAlarm('belowMedian', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps)!`);
                 } else {
                     if (recentSpeeds.length < 5 && evaluationSpeed < INITIAL_BASELINE) {
@@ -265,7 +268,7 @@
             }
         }
 
-    function triggerAlarm(mode, intervalMs, message) {
+        function triggerAlarm(mode, intervalMs, message) {
             isTotalOutage = (mode === 'outage');
             const banner = document.getElementById('alert-banner');
             banner.className = ''; 
