@@ -213,7 +213,7 @@
 
                 let median = recentSpeeds.length >= 5 ? calculateMedian(recentSpeeds) : null;
                 
-                statusEl.innerHTML = `Latest: <b>{evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>{median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
+                statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
                 // Priority Alarm Evaluation Logic
                 if (evaluationSpeed <= 0.1) {
@@ -265,7 +265,7 @@
             }
         }
 
-        function triggerAlarm(mode, intervalMs, message) {
+    function triggerAlarm(mode, intervalMs, message) {
             isTotalOutage = (mode === 'outage');
             const banner = document.getElementById('alert-banner');
             banner.className = ''; 
@@ -323,7 +323,7 @@
 
             history.forEach(entry => {
                 const li = document.createElement('li');
-                li.innerHTML = `<span>📅 {entry.time}</span> <span>⚡ <b>{entry.download} Mbps</b> ({entry.ping} ms ping)</span>`;
+                li.innerHTML = `<span>📅 ${entry.time}</span> <span>⚡ <b>${entry.download} Mbps</b> (${entry.ping} ms ping)</span>`;
                 listEl.appendChild(li);
             });
 
