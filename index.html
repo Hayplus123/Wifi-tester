@@ -22,6 +22,7 @@
         
         /* Alert banner styling */
         #alert-banner { display: none; background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; animation: pulse 1.5s infinite; }
+        #alert-banner.silent { background: #1e3a8a; border: 1px solid #3b82f6; color: #93c5fd; animation: none; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
 
         /* Custom Password Modal overlay (non-blocking) */
@@ -48,7 +49,7 @@
         
         <!-- Warning / Outage Alert Banner -->
         <div id="alert-banner">
-            <span id="alert-text">⚠️ Warning: Wi-Fi speed dropped below 5 Mbps!</span> 
+            <span id="alert-text">⚠️ Warning: Speed below threshold!</span> 
             <button id="mute-btn" class="danger" style="padding: 4px 10px; margin-left: 10px; font-size: 12px;" onclick="attemptMute()">Mute Alarm (PW Required)</button>
         </div>
 
@@ -82,13 +83,21 @@
         let isRunning = true;
         const MAX_HISTORY = 30; 
         
-        const LOW_SPEED_THRESHOLD = 5.0; 
+        const INITIAL_BASELINE = 50.0; // Default alert point before median is calibrated
         const CORRECT_PASSWORD = "Hayden0401";
 
+        let recentSpeeds = []; // Stores last 5 speed cycles for median calculation
         let alarmInterval = null;
         let isAlarmActive = false;
         let isTotalOutage = false; 
         let pendingPasswordCallback = null; 
+
+        function calculateMedian(arr) {
+            if (arr.length === 0) return 0;
+            const sorted = [...arr].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        }
 
         function verifyPassword(callback) {
             pendingPasswordCallback = callback;
@@ -171,7 +180,7 @@
                 await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
                 const ping = Math.round(performance.now() - pingStart);
 
-                // 2. Controlled Download Check using a larger 5 MB file to bypass local caching
+                // 2. Controlled Download Check (5 MB file)
                 const fileUrl = 'https://speed.cloudflare.com/__down?bytes=5000000'; 
                 const fileSizeBits = 5000000 * 8; 
                 
@@ -184,41 +193,61 @@
                 const speedNum = parseFloat(downloadSpeed);
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-                // If low/failing on the first try, wait 0.1 sec and retry ONCE
-                if ((speedNum < LOW_SPEED_THRESHOLD || speedNum <= 0.1) && !isRetry) {
+                // 0.1s single retry buffer on low/failing speeds
+                let evaluationSpeed = speedNum;
+                if ((speedNum < INITIAL_BASELINE || speedNum <= 0.1) && !isRetry) {
                     statusEl.textContent = `Low speed (${downloadSpeed} Mbps). Retrying in 0.1s...`;
-                    await new Promise(resolve => setTimeout(resolve, 100)); // 0.1 sec delay
-                    return await runSpeedTest(true); // Execute retest once
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    return await runSpeedTest(true);
                 }
 
-                const newRecord = { time: now, download: speedNum, ping: ping };
+                // Add to rolling 5-cycle median collection
+                recentSpeeds.push(evaluationSpeed);
+                if (recentSpeeds.length > 5) recentSpeeds.shift();
+
+                const newRecord = { time: now, download: evaluationSpeed, ping: ping };
 
                 let history = JSON.parse(localStorage.getItem('speedTestHistory') || '[]');
                 history.unshift(newRecord);
                 if (history.length > MAX_HISTORY) history.pop();
                 localStorage.setItem('speedTestHistory', JSON.stringify(history));
 
-                statusEl.innerHTML = `Latest: <b>${downloadSpeed} Mbps</b> | Ping: <b>${ping} ms</b>`;
+                // Determine Median and Thresholds
+                let median = recentSpeeds.length >= 5 ? calculateMedian(recentSpeeds) : null;
                 
-                // Final evaluation (either original or after successful retest)
-                if (speedNum <= 0.1) {
+                statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
+                
+                // Alert Evaluation Logic
+                if (evaluationSpeed <= 0.1) {
                     triggerTotalOutageAlarm();
-                } else if (speedNum < LOW_SPEED_THRESHOLD) {
-                    triggerLowSpeedAlarm();
+                } else if (median !== null) {
+                    const soundAlarmThreshold = median - 5.0;
+                    if (evaluationSpeed < soundAlarmThreshold) {
+                        // Below median - 5 Mbps: Loud sound alarm + visual alert
+                        triggerLowSpeedAlarm(`⚠️ Warning: Speed (${evaluationSpeed} Mbps) is 5+ Mbps below median (${median.toFixed(1)} Mbps)!`);
+                    } else if (evaluationSpeed < median) {
+                        // Below median only: Silent visual alert, NO sound
+                        triggerSilentAlert(`ℹ️ Notice: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps).`);
+                    } else {
+                        stopAlarm();
+                    }
                 } else {
-                    stopAlarm();
+                    // First 5 cycles: Use initial 50 Mbps baseline
+                    if (evaluationSpeed < INITIAL_BASELINE) {
+                        triggerLowSpeedAlarm(`⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below 50 Mbps baseline (Calibrating ${recentSpeeds.length}/5 cycles)!`);
+                    } else {
+                        stopAlarm();
+                    }
                 }
 
                 refreshUI();
 
             } catch (error) {
-                // If it threw a network error on the first attempt, retry once after 0.1 sec
                 if (!isRetry) {
                     statusEl.textContent = 'Test hiccup. Retrying in 0.1s...';
                     await new Promise(resolve => setTimeout(resolve, 100));
                     return await runSpeedTest(true);
                 } else {
-                    // Retry also failed -> trigger total outage alarm
                     statusEl.textContent = 'Test failed (Network offline).';
                     triggerTotalOutageAlarm(); 
                 }
@@ -243,11 +272,13 @@
             }
         }
 
-        function triggerLowSpeedAlarm() {
+        function triggerLowSpeedAlarm(message) {
             isTotalOutage = false;
-            document.getElementById('alert-text').textContent = '⚠️ Warning: Wi-Fi speed dropped below 5 Mbps!';
+            const banner = document.getElementById('alert-banner');
+            banner.className = ''; // Remove silent class
+            document.getElementById('alert-text').textContent = message;
             document.getElementById('mute-btn').style.display = 'inline-block'; 
-            document.getElementById('alert-banner').style.display = 'block';
+            banner.style.display = 'block';
 
             if (!isAlarmActive) {
                 isAlarmActive = true;
@@ -257,11 +288,23 @@
             }
         }
 
+        function triggerSilentAlert(message) {
+            isTotalOutage = false;
+            stopAlarm(); // Ensure any sounding alarm is stopped
+            const banner = document.getElementById('alert-banner');
+            banner.className = 'silent'; // Apply blue silent theme
+            document.getElementById('alert-text').textContent = message;
+            document.getElementById('mute-btn').style.display = 'none'; // No mute button needed since no sound
+            banner.style.display = 'block';
+        }
+
         function triggerTotalOutageAlarm() {
             isTotalOutage = true;
+            const banner = document.getElementById('alert-banner');
+            banner.className = '';
             document.getElementById('alert-text').textContent = '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)';
             document.getElementById('mute-btn').style.display = 'none'; 
-            document.getElementById('alert-banner').style.display = 'block';
+            banner.style.display = 'block';
 
             if (!isAlarmActive) {
                 isAlarmActive = true;
@@ -278,6 +321,7 @@
                 clearInterval(alarmInterval);
                 alarmInterval = null;
                 document.getElementById('alert-banner').style.display = 'none';
+                document.getElementById('alert-banner').className = '';
             }
         }
 
@@ -337,9 +381,10 @@
         function clearHistory() {
             verifyPassword(() => {
                 localStorage.removeItem('speedTestHistory');
+                recentSpeeds = []; // Reset the 5-cycle median calibration history on reset!
                 stopAlarm();
                 refreshUI();
-                document.getElementById('current-status').textContent = 'History cleared.';
+                document.getElementById('current-status').textContent = 'History and median calibration cleared.';
             });
         }
 
