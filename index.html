@@ -171,17 +171,32 @@
             });
         }
 
-        // Fast 1-second background connectivity heartbeat check
+        // Fast 1-second connection heartbeat check using browser state + lightweight ping
         async function checkConnectionQuick() {
             if (isTesting) return; // Skip if a heavy speed test is currently active
 
+            // 1. Check system network connection status instantly via browser API
+            if (navigator.onLine === false) {
+                if (!isTotalOutage) {
+                    stopAllAlarms();
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                }
+                return;
+            }
+
+            // 2. Lightweight fetch check (using GET instead of HEAD to avoid browser blocking)
             try {
-                await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { 
-                    method: 'HEAD', 
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
+                await fetch('https://speed.cloudflare.com/__down?bytes=0&cacheBust=' + Math.random(), { 
+                    method: 'GET', 
                     mode: 'no-cors',
-                    cache: 'no-store'
+                    signal: controller.signal
                 });
                 
+                clearTimeout(timeoutId);
+
                 if (isTotalOutage) {
                     stopAllAlarms();
                 }
@@ -207,7 +222,7 @@
             try {
                 // 1. Ping Check
                 const pingStart = performance.now();
-                await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
+                await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { method: 'GET', mode: 'no-cors' });
                 const ping = Math.round(performance.now() - pingStart);
 
                 // 2. Controlled Download Check (5 MB file)
@@ -264,7 +279,6 @@
                         messageParts.push(`Median is below 50 Mbps (${median.toFixed(1)} Mbps)`);
                         hasWarning = true;
                     }
-                    // Below Median is now fully active in the mix regardless of 50 Mbps threshold!
                     if (median !== null && evaluationSpeed < median) {
                         setBelowMedianAlarm();
                         messageParts.push(`Speed is below median (${median.toFixed(1)} Mbps)`);
