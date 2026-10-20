@@ -182,12 +182,10 @@
                     cache: 'no-store'
                 });
                 
-                // If it was previously in a total outage, clear it if heartbeat succeeds
                 if (isTotalOutage) {
                     stopAllAlarms();
                 }
             } catch (error) {
-                // Heartbeat failed -> Instant outage trigger
                 if (!isTotalOutage) {
                     stopAllAlarms();
                     triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
@@ -196,7 +194,6 @@
         }
 
         async function runSpeedTest(isRetry = false) {
-            // Lock mechanism: block new tests if already running (retry bypasses this lock)
             if (isTesting && !isRetry) return;
             isTesting = true;
 
@@ -230,7 +227,7 @@
                 if ((speedNum < INITIAL_BASELINE || speedNum <= 0.1) && !isRetry) {
                     statusEl.textContent = `Low speed (${downloadSpeed} Mbps). Retrying in 0.1s...`;
                     await new Promise(resolve => setTimeout(resolve, 100));
-                    isTesting = false; // Release lock briefly for retry
+                    isTesting = false; 
                     return await runSpeedTest(true);
                 }
 
@@ -267,7 +264,8 @@
                         messageParts.push(`Median is below 50 Mbps (${median.toFixed(1)} Mbps)`);
                         hasWarning = true;
                     }
-                    if (median !== null && evaluationSpeed < median && evaluationSpeed >= 50.0) {
+                    // Below Median is now fully active in the mix regardless of 50 Mbps threshold!
+                    if (median !== null && evaluationSpeed < median) {
                         setBelowMedianAlarm();
                         messageParts.push(`Speed is below median (${median.toFixed(1)} Mbps)`);
                         hasWarning = true;
@@ -286,7 +284,7 @@
                 }
 
                 refreshUI();
-                isTesting = false; // Release execution lock
+                isTesting = false; 
 
             } catch (error) {
                 if (!isRetry) {
@@ -298,7 +296,7 @@
                     statusEl.textContent = 'Test failed (Network offline).';
                     stopAllAlarms();
                     triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
-                    isTesting = false; // Release execution lock
+                    isTesting = false; 
                 }
             }
         }
@@ -400,7 +398,7 @@
 
             history.forEach(entry => {
                 const li = document.createElement('li');
-                li.innerHTML = `<span>📅 ${entry.time}</span> <span>⚡ <b>${entry.download} Mbps</b> (${entry.ping} ms ping)</span>`;
+                li.innerHTML = `📅 ${entry.time} - <b>${entry.download} Mbps</b> (${entry.ping} ms ping)`;
                 listEl.appendChild(li);
             });
 
@@ -424,7 +422,7 @@
                     toggleBtn.textContent = 'Resume Auto-Check (PW Required)';
                 } else {
                     autoTimer = setInterval(runSpeedTest, 15000); 
-                    quickCheckTimer = setInterval(checkConnectionQuick, 1000); // 1-second quick heartbeat check
+                    quickCheckTimer = setInterval(checkConnectionQuick, 1000); 
                     isRunning = true;
                     statusLabel.textContent = 'Running (Every 15 sec)';
                     statusLabel.className = 'status-active';
@@ -447,7 +445,7 @@
             initChart();
             refreshUI();
             autoTimer = setInterval(runSpeedTest, 15000);
-            quickCheckTimer = setInterval(checkConnectionQuick, 1000); // Start the 1-sec heartbeat check
+            quickCheckTimer = setInterval(checkConnectionQuick, 1000); 
         };
     </script>
 </body>
