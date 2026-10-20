@@ -178,7 +178,7 @@
             if (navigator.onLine === false) {
                 if (!isTotalOutage) {
                     stopAllAlarms();
-                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! | Network Interface Offline | All Alarms Triggered (350Hz, 600Hz, 850Hz, 1100Hz)');
                 }
                 return;
             }
@@ -201,7 +201,7 @@
             } catch (error) {
                 if (!isTotalOutage) {
                     stopAllAlarms();
-                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! | Connection Timeout (10s exceeded) / Outage Detected | All Alarms Triggered (350Hz, 600Hz, 850Hz, 1100Hz)');
                 }
             }
         }
@@ -262,7 +262,7 @@
                 stopAllAlarms();
 
                 if (evaluationSpeed <= 0.1) {
-                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! | Speed Test Outage (<= 0.1 Mbps) | All Alarms Triggered (350Hz, 600Hz, 850Hz, 1100Hz)');
                 } else {
                     let hasWarning = false;
                     let messageParts = [];
@@ -307,7 +307,7 @@
                 } else {
                     statusEl.textContent = 'Test failed (Network offline).';
                     stopAllAlarms();
-                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! | Network Fetch Failed / Offline | All Alarms Triggered (350Hz, 600Hz, 850Hz, 1100Hz)');
                     isTesting = false; 
                 }
             }
