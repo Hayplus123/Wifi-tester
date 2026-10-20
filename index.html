@@ -86,11 +86,14 @@
         const CORRECT_PASSWORD = "Hayden0401";
 
         let recentSpeeds = []; 
-        let alarmInterval = null;
-        let isAlarmActive = false;
         let isTotalOutage = false; 
-        let currentAlarmMode = null;
         let pendingPasswordCallback = null; 
+
+        // Independent timers for each alarm type to allow overlapping pitches
+        let outageTimer = null;
+        let below50Timer = null;
+        let medianBelow50Timer = null;
+        let belowMedianTimer = null;
 
         function calculateMedian(arr) {
             if (arr.length === 0) return 0;
@@ -215,24 +218,42 @@
                 
                 statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
-                // Alarm Evaluation Logic
+                // Reset alarms before re-evaluating conditions
+                stopAllAlarms();
+
+                // Multi-Condition Alarm Evaluation (Alarms can run/overlap simultaneously)
                 if (evaluationSpeed <= 0.1) {
-                    // Total Outage (0.5s beep)
-                    triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
-                } else if (evaluationSpeed < 50.0) {
-                    // Current speed below 50 Mbps (1s fast beep)
-                    triggerAlarm('below50', 1000, `🚨 WARNING: Current speed is below 50 Mbps (${evaluationSpeed} Mbps)!`);
-                } else if (median !== null && median < 50.0) {
-                    // Current speed >= 50 Mbps, but median < 50 Mbps (3s beep)
-                    triggerAlarm('medianBelow50', 3000, `⚠️ Warning: Median speed (${median.toFixed(1)} Mbps) is below 50 Mbps!`);
-                } else if (median !== null && evaluationSpeed < median) {
-                    // Speed below median (5s beep)
-                    triggerAlarm('belowMedian', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below median (${median.toFixed(1)} Mbps)!`);
+                    // Total Outage: Triggers ALL pitches at once (350Hz, 600Hz, 850Hz, 1100Hz) every 0.5s
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
                 } else {
+                    let hasWarning = false;
+                    let messageParts = [];
+
+                    if (evaluationSpeed < 50.0) {
+                        setBelow50Alarm();
+                        messageParts.push(`Speed is below 50 Mbps (${evaluationSpeed} Mbps)`);
+                        hasWarning = true;
+                    }
+                    if (median !== null && median < 50.0) {
+                        setMedianBelow50Alarm();
+                        messageParts.push(`Median is below 50 Mbps (${median.toFixed(1)} Mbps)`);
+                        hasWarning = true;
+                    }
+                    if (median !== null && evaluationSpeed < median && evaluationSpeed >= 50.0) {
+                        setBelowMedianAlarm();
+                        messageParts.push(`Speed is below median (${median.toFixed(1)} Mbps)`);
+                        hasWarning = true;
+                    }
                     if (recentSpeeds.length < 5 && evaluationSpeed < INITIAL_BASELINE) {
-                        triggerAlarm('calibratingLow', 5000, `⚠️ Warning: Speed (${evaluationSpeed} Mbps) is below 50 Mbps baseline (Calibrating ${recentSpeeds.length}/5 cycles)!`);
+                        setBelow50Alarm();
+                        messageParts.push(`Calibrating baseline (${recentSpeeds.length}/5)`);
+                        hasWarning = true;
+                    }
+
+                    if (hasWarning) {
+                        showBanner('⚠️ Warning: ' + messageParts.join(' | '), false);
                     } else {
-                        stopAlarm();
+                        hideBanner();
                     }
                 }
 
@@ -245,63 +266,86 @@
                     return await runSpeedTest(true);
                 } else {
                     statusEl.textContent = 'Test failed (Network offline).';
-                    triggerAlarm('outage', 500, '🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    stopAllAlarms();
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
                 }
             }
         }
 
-        // Web Audio API Beep Generator
-        function playBeepTone() {
+        // Web Audio API Multi-Pitch Tone Generator
+        function playTones(frequencies) {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(700, audioCtx.currentTime); 
-                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start();
-                osc.stop(audioCtx.currentTime + 0.15); 
+                if (!Array.isArray(frequencies)) frequencies = [frequencies];
+
+                frequencies.forEach(freq => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, audioCtx.currentTime); 
+                    // Lower individual gain when multiple tones overlap so it isn't deafening
+                    gain.gain.setValueAtTime(frequencies.length > 1 ? 0.08 : 0.15, audioCtx.currentTime);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.15); 
+                });
             } catch (e) {
                 console.log("AudioContext blocked or not supported.");
             }
         }
 
-        function triggerAlarm(mode, intervalMs, message) {
-            isTotalOutage = (mode === 'outage');
+        // Alarm Controllers
+        function triggerOutageAlarm(message) {
+            isTotalOutage = true;
+            showBanner(message, true);
+            if (!outageTimer) {
+                playTones([350, 600, 850, 1100]); // All pitches sound at once
+                outageTimer = setInterval(() => {
+                    playTones([350, 600, 850, 1100]);
+                }, 500);
+            }
+        }
+
+        function setBelow50Alarm() {
+            if (!below50Timer) {
+                playTones(600); // Pitch 600 Hz
+                below50Timer = setInterval(() => playTones(600), 1000); // Every 1 sec
+            }
+        }
+
+        function setMedianBelow50Alarm() {
+            if (!medianBelow50Timer) {
+                playTones(850); // Pitch 850 Hz
+                medianBelow50Timer = setInterval(() => playTones(850), 3000); // Every 3 sec
+            }
+        }
+
+        function setBelowMedianAlarm() {
+            if (!belowMedianTimer) {
+                playTones(1100); // Pitch 1100 Hz
+                belowMedianTimer = setInterval(() => playTones(1100), 5000); // Every 5 sec
+            }
+        }
+
+        function showBanner(message, isOutage) {
             const banner = document.getElementById('alert-banner');
-            banner.className = ''; 
             document.getElementById('alert-text').textContent = message;
-            
-            document.getElementById('mute-btn').style.display = isTotalOutage ? 'none' : 'inline-block';
+            document.getElementById('mute-btn').style.display = isOutage ? 'none' : 'inline-block';
             banner.style.display = 'block';
-
-            if (!isAlarmActive || currentAlarmMode !== mode) {
-                stopAlarmInterval();
-                isAlarmActive = true;
-                currentAlarmMode = mode;
-                playBeepTone();
-                alarmInterval = setInterval(playBeepTone, intervalMs);
-            }
         }
 
-        function stopAlarmInterval() {
-            if (alarmInterval) {
-                clearInterval(alarmInterval);
-                alarmInterval = null;
-            }
+        function hideBanner() {
+            document.getElementById('alert-banner').style.display = 'none';
         }
 
-        function stopAlarm() {
+        function stopAllAlarms() {
             isTotalOutage = false;
-            currentAlarmMode = null;
-            if (isAlarmActive) {
-                isAlarmActive = false;
-                stopAlarmInterval();
-                document.getElementById('alert-banner').style.display = 'none';
-                document.getElementById('alert-banner').className = '';
-            }
+            if (outageTimer) { clearInterval(outageTimer); outageTimer = null; }
+            if (below50Timer) { clearInterval(below50Timer); below50Timer = null; }
+            if (medianBelow50Timer) { clearInterval(medianBelow50Timer); medianBelow50Timer = null; }
+            if (belowMedianTimer) { clearInterval(belowMedianTimer); belowMedianTimer = null; }
+            hideBanner();
         }
 
         function attemptMute() {
@@ -310,7 +354,7 @@
                 return;
             }
             verifyPassword(() => {
-                stopAlarm();
+                stopAllAlarms();
             });
         }
 
@@ -361,7 +405,7 @@
             verifyPassword(() => {
                 localStorage.removeItem('speedTestHistory');
                 recentSpeeds = []; 
-                stopAlarm(); 
+                stopAllAlarms(); 
                 refreshUI();
                 document.getElementById('current-status').textContent = 'History and median calibration cleared.';
             });
