@@ -79,7 +79,9 @@
     <script>
         let speedChart;
         let autoTimer = null;
+        let quickCheckTimer = null;
         let isRunning = true;
+        let isTesting = false; // Lock mechanism to prevent overlapping tests
         const MAX_HISTORY = 30; 
         
         const INITIAL_BASELINE = 50.0; 
@@ -169,7 +171,35 @@
             });
         }
 
+        // Fast 1-second background connectivity heartbeat check
+        async function checkConnectionQuick() {
+            if (isTesting) return; // Skip if a heavy speed test is currently active
+
+            try {
+                await fetch('https://www.cloudflare.com/cdn-cgi/trace?' + Math.random(), { 
+                    method: 'HEAD', 
+                    mode: 'no-cors',
+                    cache: 'no-store'
+                });
+                
+                // If it was previously in a total outage, clear it if heartbeat succeeds
+                if (isTotalOutage) {
+                    stopAllAlarms();
+                }
+            } catch (error) {
+                // Heartbeat failed -> Instant outage trigger
+                if (!isTotalOutage) {
+                    stopAllAlarms();
+                    triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                }
+            }
+        }
+
         async function runSpeedTest(isRetry = false) {
+            // Lock mechanism: block new tests if already running (retry bypasses this lock)
+            if (isTesting && !isRetry) return;
+            isTesting = true;
+
             const statusEl = document.getElementById('current-status');
             if (!isRetry) {
                 statusEl.textContent = 'Running test (5 MB stream)...';
@@ -200,6 +230,7 @@
                 if ((speedNum < INITIAL_BASELINE || speedNum <= 0.1) && !isRetry) {
                     statusEl.textContent = `Low speed (${downloadSpeed} Mbps). Retrying in 0.1s...`;
                     await new Promise(resolve => setTimeout(resolve, 100));
+                    isTesting = false; // Release lock briefly for retry
                     return await runSpeedTest(true);
                 }
 
@@ -218,12 +249,9 @@
                 
                 statusEl.innerHTML = `Latest: <b>${evaluationSpeed} Mbps</b> | Median (${recentSpeeds.length}/5): <b>${median !== null ? median.toFixed(1) + ' Mbps' : 'Calibrating...'}</b>`;
                 
-                // Reset alarms before re-evaluating conditions
                 stopAllAlarms();
 
-                // Multi-Condition Alarm Evaluation (Alarms can run/overlap simultaneously)
                 if (evaluationSpeed <= 0.1) {
-                    // Total Outage: Triggers ALL pitches at once (350Hz, 600Hz, 850Hz, 1100Hz) every 0.5s
                     triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
                 } else {
                     let hasWarning = false;
@@ -258,16 +286,19 @@
                 }
 
                 refreshUI();
+                isTesting = false; // Release execution lock
 
             } catch (error) {
                 if (!isRetry) {
                     statusEl.textContent = 'Test hiccup. Retrying in 0.1s...';
                     await new Promise(resolve => setTimeout(resolve, 100));
+                    isTesting = false;
                     return await runSpeedTest(true);
                 } else {
                     statusEl.textContent = 'Test failed (Network offline).';
                     stopAllAlarms();
                     triggerOutageAlarm('🚨 CRITICAL: Wi-Fi is completely down! (CANNOT BE MUTED)');
+                    isTesting = false; // Release execution lock
                 }
             }
         }
@@ -283,7 +314,6 @@
                     const gain = audioCtx.createGain();
                     osc.type = 'sine';
                     osc.frequency.setValueAtTime(freq, audioCtx.currentTime); 
-                    // Lower individual gain when multiple tones overlap so it isn't deafening
                     gain.gain.setValueAtTime(frequencies.length > 1 ? 0.08 : 0.15, audioCtx.currentTime);
                     osc.connect(gain);
                     gain.connect(audioCtx.destination);
@@ -300,7 +330,7 @@
             isTotalOutage = true;
             showBanner(message, true);
             if (!outageTimer) {
-                playTones([350, 600, 850, 1100]); // All pitches sound at once
+                playTones([350, 600, 850, 1100]); 
                 outageTimer = setInterval(() => {
                     playTones([350, 600, 850, 1100]);
                 }, 500);
@@ -309,22 +339,22 @@
 
         function setBelow50Alarm() {
             if (!below50Timer) {
-                playTones(600); // Pitch 600 Hz
-                below50Timer = setInterval(() => playTones(600), 1000); // Every 1 sec
+                playTones(600); 
+                below50Timer = setInterval(() => playTones(600), 1000); 
             }
         }
 
         function setMedianBelow50Alarm() {
             if (!medianBelow50Timer) {
-                playTones(850); // Pitch 850 Hz
-                medianBelow50Timer = setInterval(() => playTones(850), 3000); // Every 3 sec
+                playTones(850); 
+                medianBelow50Timer = setInterval(() => playTones(850), 3000); 
             }
         }
 
         function setBelowMedianAlarm() {
             if (!belowMedianTimer) {
-                playTones(1100); // Pitch 1100 Hz
-                belowMedianTimer = setInterval(() => playTones(1100), 5000); // Every 5 sec
+                playTones(1100); 
+                belowMedianTimer = setInterval(() => playTones(1100), 5000); 
             }
         }
 
@@ -387,12 +417,14 @@
 
                 if (isRunning) {
                     clearInterval(autoTimer);
+                    clearInterval(quickCheckTimer);
                     isRunning = false;
                     statusLabel.textContent = 'Paused';
                     statusLabel.className = 'status-paused';
                     toggleBtn.textContent = 'Resume Auto-Check (PW Required)';
                 } else {
                     autoTimer = setInterval(runSpeedTest, 15000); 
+                    quickCheckTimer = setInterval(checkConnectionQuick, 1000); // 1-second quick heartbeat check
                     isRunning = true;
                     statusLabel.textContent = 'Running (Every 15 sec)';
                     statusLabel.className = 'status-active';
@@ -415,6 +447,7 @@
             initChart();
             refreshUI();
             autoTimer = setInterval(runSpeedTest, 15000);
+            quickCheckTimer = setInterval(checkConnectionQuick, 1000); // Start the 1-sec heartbeat check
         };
     </script>
 </body>
