@@ -171,11 +171,10 @@
             });
         }
 
-        // Fast 1-second connection heartbeat check using browser state + lightweight ping
+        // 1-second connection heartbeat check with a 10-second response timeout threshold
         async function checkConnectionQuick() {
             if (isTesting) return; // Skip if a heavy speed test is currently active
 
-            // 1. Check system network connection status instantly via browser API
             if (navigator.onLine === false) {
                 if (!isTotalOutage) {
                     stopAllAlarms();
@@ -184,10 +183,9 @@
                 return;
             }
 
-            // 2. Lightweight fetch check (using GET instead of HEAD to avoid browser blocking)
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second response timeout threshold
 
                 await fetch('https://speed.cloudflare.com/__down?bytes=0&cacheBust=' + Math.random(), { 
                     method: 'GET', 
